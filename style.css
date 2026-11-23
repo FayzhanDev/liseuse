@@ -288,6 +288,27 @@ body:not(.dans-lecteur) .seulement-lecteur { display: none !important; }
 #lecteur.mode-defilement .tourne, #lecteur.zen .tourne { display: none; }
 #lecteur.zen #zoneLecture { top: max(24px, env(safe-area-inset-top)); bottom: 24px; }
 
+/* Pendant la lecture, toute la page prend la couleur du livre (pas de bande sous la barre d'accueil iPhone) */
+html:has(body.dans-lecteur), body.dans-lecteur { background: var(--lecture-fond); }
+
+/* Écrans tactiles : le texte occupe tout l'écran, les barres apparaissent PAR-DESSUS quand on touche le centre */
+@media (hover: none) {
+  #zoneLecture, #lecteur.zen #zoneLecture {
+    top: calc(env(safe-area-inset-top) + 18px);
+    bottom: calc(env(safe-area-inset-bottom) + 30px);
+  }
+  .lecteur-barre, .lecteur-bas { box-shadow: 0 0 24px rgba(0, 0, 0, .45); }
+}
+
+/* Petit repère de progression discret, visible quand les barres sont cachées */
+.repere {
+  position: absolute; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom) + 6px); z-index: 4;
+  text-align: center; font-size: .72rem; font-weight: 600; color: var(--doux); opacity: .7; pointer-events: none;
+  transition: opacity .25s;
+}
+#lecteur:not(.immersif) .repere, #lecteur.zen .repere { opacity: 0; }
+@media (hover: hover) { .repere { display: none; } }
+
 .titres { flex: 1; min-width: 0; text-align: center; padding: 0 4px; }
 .titre-chapitre { font-size: .7rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .titre-livre { font-size: .85rem; color: var(--doux); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

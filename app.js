@@ -1011,19 +1011,35 @@ function creerRendu() {
     const doc = contents.document;
     injecterCss(doc);
     const zone = $('#zoneLecture');
-    let debutX = null, debutY = null, debutT = 0, horizontal = null;
+    let debutX = null, debutY = null, debutT = 0, horizontal = null, glisse = false;
+    let dernierToucher = 0; // pour ignorer le « clic » que certains navigateurs envoient après un toucher
 
     const texteSelectionne = () => !!doc.getSelection()?.toString().trim();
 
+    // Un toucher (ou un clic) à la position clientX : bord gauche / centre / bord droit
+    const toucherA = (clientX) => {
+      $('#barreSurlignage').hidden = true;
+      if (prefs.mode !== 'pages') return basculerBarres(); // défilement : un toucher affiche/cache les barres
+      const cadre = contents.window.frameElement.getBoundingClientRect();
+      const z = zone.getBoundingClientRect();
+      const x = (cadre.left + clientX - z.left) / z.width;
+      // Tiers gauche = page précédente, tiers droit = page suivante, centre = menu
+      if (x < 0.33) pagePrecedente();
+      else if (x > 0.67) pageSuivante();
+      else basculerBarres();
+    };
+
     doc.addEventListener('touchstart', (e) => {
-      if (prefs.mode !== 'pages' || animationEnCours || e.touches.length > 1 || texteSelectionne()) return;
+      if (e.touches.length > 1) { debutX = null; return; }
       const t = e.touches[0];
       debutX = t.screenX; debutY = t.screenY; debutT = Date.now(); horizontal = null;
-      zone.style.transition = 'none';
+      // La page ne suit le doigt qu'en mode Pages, hors sélection de texte
+      glisse = prefs.mode === 'pages' && !animationEnCours && !texteSelectionne();
+      if (glisse) zone.style.transition = 'none';
     }, { passive: true });
 
     doc.addEventListener('touchmove', (e) => {
-      if (debutX === null) return;
+      if (debutX === null || !glisse) return;
       const t = e.touches[0];
       const dx = t.screenX - debutX, dy = t.screenY - debutY;
       if (horizontal === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) horizontal = Math.abs(dx) > Math.abs(dy);
@@ -1034,37 +1050,43 @@ function creerRendu() {
       }
     }, { passive: true });
 
-    const finGlissement = (e) => {
+    const finToucher = (e) => {
       if (debutX === null) return;
       const t = e.changedTouches[0];
-      const dx = t.screenX - debutX;
-      const vitesse = Math.abs(dx) / Math.max(1, Date.now() - debutT);
+      const dx = t.screenX - debutX, dy = t.screenY - debutY;
+      const duree = Date.now() - debutT;
       const etaitHorizontal = horizontal;
       debutX = null; horizontal = null;
-      // Pendant une sélection de texte (appui long), on ne tourne pas la page
+
+      // 1. Simple toucher (court, sans bouger) : on le gère nous-mêmes.
+      //    Sur iPhone, Safari n'envoie pas toujours de « clic » sur du texte.
+      if (e.type === 'touchend' && Math.abs(dx) < 10 && Math.abs(dy) < 10 && duree < 400) {
+        if (glisse) annulerGlissement();
+        if (e.target.closest?.('a') || texteSelectionne()) return;
+        dernierToucher = Date.now();
+        toucherA(t.clientX);
+        return;
+      }
+      if (!glisse) return;
+      // 2. Glissement : pendant une sélection de texte (appui long), on ne tourne pas la page
       if (!etaitHorizontal || texteSelectionne()) { annulerGlissement(); return; }
       // On tourne si le doigt a parcouru assez de distance, ou s'il a été lancé rapidement
+      const vitesse = Math.abs(dx) / Math.max(1, duree);
       if (Math.abs(dx) > zone.clientWidth * 0.18 || (Math.abs(dx) > 25 && vitesse > 0.35)) {
         dx < 0 ? pageSuivante() : pagePrecedente();
       } else {
         annulerGlissement();
       }
     };
-    doc.addEventListener('touchend', finGlissement, { passive: true });
-    doc.addEventListener('touchcancel', finGlissement, { passive: true });
+    doc.addEventListener('touchend', finToucher, { passive: true });
+    doc.addEventListener('touchcancel', finToucher, { passive: true });
 
+    // Souris (PC) — et clic envoyé après un toucher, qu'on ignore car déjà traité
     doc.addEventListener('click', (e) => {
+      if (Date.now() - dernierToucher < 700) return;
       if (e.target.closest('a')) return;
       if (texteSelectionne()) return;
-      $('#barreSurlignage').hidden = true;
-      if (prefs.mode !== 'pages') return basculerBarres(); // défilement : un toucher affiche/cache les barres
-      const cadre = contents.window.frameElement.getBoundingClientRect();
-      const z = zone.getBoundingClientRect();
-      const x = (cadre.left + e.clientX - z.left) / z.width;
-      // Toucher : bord gauche = page précédente, bord droit = page suivante, centre = menu
-      if (x < 0.25) pagePrecedente();
-      else if (x > 0.75) pageSuivante();
-      else basculerBarres();
+      toucherA(e.clientX);
     });
     doc.addEventListener('keydown', gererClavier);
   });
@@ -1236,6 +1258,7 @@ function surDeplacement(loc) {
   if (locationsPretes) pct = book.locations.percentageFromCfi(loc.start.cfi);
   else pct = (loc.start.index || 0) / Math.max(1, book.spine.length);
   $('#pourcentage').textContent = Math.round(pct * 100) + ' %';
+  $('#repere').textContent = Math.round(pct * 100) + ' %';
   if (locationsPretes) $('#curseur').value = Math.round(pct * 1000);
   document.querySelectorAll('#listeSommaire a').forEach(a => a.classList.toggle('actuel', a.textContent === chapitre));
   derniereProgression = { cfi: loc.start.cfi, percent: pct, chapter: chapitre };
@@ -1297,6 +1320,8 @@ async function ouvrirLivre(id) {
     if (meta.title) $('#titreLivre').textContent = meta.title;
 
     await rendition.display(progres?.cfi || undefined);
+    // Sur téléphone, on lit en plein écran : les barres réapparaissent en touchant le centre
+    if (ECRAN_TACTILE) setTimeout(() => basculerBarres(true), 1200);
 
     // Complète les infos de la bibliothèque si le livre a été copié à la main dans "livres"
     if (!infos.cover && !infos.author) extraireMeta(book).then(m => api.sauverMeta(id, m)).catch(() => {});
