@@ -13,15 +13,25 @@ const attendre = (ms) => new Promise(r => setTimeout(r, ms));
 const ECRAN_TACTILE = matchMedia('(pointer: coarse)').matches;
 const PREFS_DEFAUT = {
   taille: ECRAN_TACTILE ? 110 : 100,
-  theme: 'sombre',
-  police: 'Georgia, serif',
-  interligne: '1.6',
+  theme: 'nuit',              // ambiance : nuit | abysse | tamisee
+  police: 'Literata',
+  interligne: '1.74',
   mode: 'pages',
+  tamiseur: 0,                // voile sombre, de 0 à 60 %
+  zen: false,
 };
 const CLE_PREFS = 'liseuse.prefs.v3';
+const AMBIANCES = ['nuit', 'abysse', 'tamisee'];
+const POLICES = ['Literata', 'Lora', 'Atkinson Hyperlegible', ''];
 function lirePrefs() {
-  try { return { ...PREFS_DEFAUT, ...JSON.parse(localStorage.getItem(CLE_PREFS) || '{}') }; }
-  catch { return { ...PREFS_DEFAUT }; }
+  let p;
+  try { p = { ...PREFS_DEFAUT, ...JSON.parse(localStorage.getItem(CLE_PREFS) || '{}') }; }
+  catch { p = { ...PREFS_DEFAUT }; }
+  // Anciennes valeurs (Clair/Sépia/Noir, Georgia…) → nouvelle charte
+  if (!AMBIANCES.includes(p.theme)) p.theme = 'nuit';
+  if (!POLICES.includes(p.police)) p.police = 'Literata';
+  if (!['1.5', '1.74', '2'].includes(String(p.interligne))) p.interligne = '1.74';
+  return p;
 }
 function ecrirePrefs() {
   try { localStorage.setItem(CLE_PREFS, JSON.stringify(prefs)); } catch { /* navigation privée */ }
@@ -52,6 +62,10 @@ const apiServeur = {
   },
   sauverLocations: (id, txt) => fetch('/api/books/' + encodeURIComponent(id) + '/locations', { method: 'PUT', body: txt }),
   source: async (id) => '/livres/' + encodeURIComponent(id),
+  annotations: (id) => fetch('/api/books/' + encodeURIComponent(id) + '/annotations').then(r => (r.ok ? r.json() : {})),
+  sauverAnnotations: (id, data) => fetch('/api/books/' + encodeURIComponent(id) + '/annotations', {
+    method: 'PUT', body: JSON.stringify(data), keepalive: true, headers: { 'Content-Type': 'application/json' },
+  }),
 };
 
 // ---------- Stockage n°2 : dans le navigateur (IndexedDB) ----------
@@ -127,6 +141,11 @@ const apiAppareil = {
     if (!donnees) throw new Error('fichier absent de cet appareil');
     return donnees;
   },
+  async annotations(id) { return (await lire('livres', id))?.annotations || {}; },
+  async sauverAnnotations(id, data) {
+    const l = await lire('livres', id);
+    if (l) { l.annotations = data; await ecrire('livres', l); }
+  },
 };
 
 // ---------- Stockage n°3 : en ligne avec Supabase (compte privé) ----------
@@ -153,7 +172,7 @@ const apiCloud = {
   async livres() {
     const attente = lireAttente();
     try {
-      const lignes = await verifier(await sb.from('livres').select('id,title,author,cover,size,fichier,added,progress'));
+      const lignes = await verifier(await sb.from('livres').select('id,title,author,cover,size,fichier,added,progress,annotations'));
       const liste = lignes.map(l => ({ ...l, added: Date.parse(l.added), progress: plusRecente(l.progress, attente[l.id]) }));
       // Copie locale de la liste (pour le mode hors connexion)
       await cache.vider('livres');
@@ -232,7 +251,30 @@ const apiCloud = {
     await cache.ecrire('fichiers', donnees, id); // gardé sur l'appareil pour la prochaine fois
     return donnees;
   },
+  async annotations(id) {
+    const enAttente = lireAttenteNotes()[id];
+    if (enAttente) return enAttente.data;
+    try {
+      const ligne = await verifier(await sb.from('livres').select('annotations').eq('id', id).maybeSingle());
+      const local = await cache.lire('livres', id);
+      if (local) { local.annotations = ligne?.annotations || {}; await cache.ecrire('livres', local); }
+      return ligne?.annotations || {};
+    } catch {
+      return (await cache.lire('livres', id))?.annotations || {};
+    }
+  },
+  async sauverAnnotations(id, data) {
+    const attente = lireAttenteNotes(); attente[id] = { data, updated: Date.now() }; ecrireAttenteNotes(attente);
+    const local = await cache.lire('livres', id);
+    if (local) { local.annotations = data; await cache.ecrire('livres', local); }
+    await envoyerAttente();
+  },
 };
+
+// Marque-pages et surlignages enregistrés hors connexion
+const CLE_ATTENTE_NOTES = 'liseuse.annotations-en-attente';
+function lireAttenteNotes() { try { return JSON.parse(localStorage.getItem(CLE_ATTENTE_NOTES) || '{}'); } catch { return {}; } }
+function ecrireAttenteNotes(a) { try { localStorage.setItem(CLE_ATTENTE_NOTES, JSON.stringify(a)); } catch { /* ignoré */ } }
 
 // Envoie les progressions enregistrées pendant qu'on était hors connexion
 let envoiEnCours = false;
@@ -246,6 +288,12 @@ async function envoyerAttente() {
       if (error) break;
       const reste = lireAttente();
       if (reste[id]?.updated === p.updated) { delete reste[id]; ecrireAttente(reste); }
+    }
+    for (const [id, n] of Object.entries(lireAttenteNotes())) {
+      const { error } = await sb.from('livres').update({ annotations: n.data }).eq('id', id);
+      if (error) break;
+      const reste = lireAttenteNotes();
+      if (reste[id]?.updated === n.updated) { delete reste[id]; ecrireAttenteNotes(reste); }
     }
   } catch { /* toujours hors connexion : on réessaiera */ }
   envoiEnCours = false;
@@ -416,6 +464,10 @@ $('#btnTransfert').addEventListener('click', async () => {
       }
       const loc = await l.depuis.locations(l.id).catch(() => null);
       if (loc) await apiCloud.sauverLocations(l.id, loc);
+      const notes = await l.depuis.annotations(l.id).catch(() => null);
+      if (notes?.marques?.length || notes?.surlignages?.length) {
+        await verifier(await sb.from('livres').update({ annotations: notes }).eq('id', l.id));
+      }
       ok++;
     } catch (err) {
       message(`Erreur pour « ${l.title} » : ${err.message}`, 8000);
@@ -469,17 +521,26 @@ async function afficherBibliotheque() {
   $('#vide').hidden = livresCache.length > 0;
   $('#titreListe').hidden = livresCache.length === 0;
 
-  grille.innerHTML = livresCache.map(l => {
+  const n = livresCache.length;
+  $('#compteurLivres').textContent = `${n} livre${n > 1 ? 's' : ''}`;
+
+  const progres = (l) => {
     const pct = Math.round((l.progress?.percent || 0) * 100);
     return `
+      <div class="ligne-progres"><span>${esc(l.progress?.chapter || (l.progress ? 'En cours' : 'Pas encore commencé'))}</span><b>${pct} %</b></div>
+      <div class="jauge"><div style="width:${pct}%"></div></div>`;
+  };
+
+  grille.innerHTML = livresCache.map(l => `
       <article class="livre" data-id="${esc(l.id)}" tabindex="0">
         <div class="couverture">${htmlCouverture(l)}</div>
+        <div class="infos">
+          <div class="nom">${esc(l.title)}</div>
+          <div class="auteur">${esc(l.author) || '&nbsp;'}</div>
+          ${progres(l)}
+        </div>
         <button class="suppr" data-suppr="${esc(l.id)}" title="Supprimer ce livre" aria-label="Supprimer">✕</button>
-        <div class="nom">${esc(l.title)}</div>
-        <div class="auteur">${esc(l.author) || '&nbsp;'}</div>
-        ${l.progress ? `<div class="jauge"><div style="width:${pct}%"></div></div>` : ''}
-      </article>`;
-  }).join('');
+      </article>`).join('');
 
   const enCours = livresCache.find(l => l.progress && l.progress.percent < 0.995);
   $('#reprendre').hidden = !enCours;
@@ -488,10 +549,9 @@ async function afficherBibliotheque() {
       <div class="reprendre" data-id="${esc(enCours.id)}">
         <div class="couverture">${htmlCouverture(enCours)}</div>
         <div class="infos">
-          <strong>${esc(enCours.title)}</strong>
-          <span>${esc(enCours.progress.chapter || '')}</span>
-          <div class="jauge"><div style="width:${Math.round(enCours.progress.percent * 100)}%"></div></div>
-          <span>${Math.round(enCours.progress.percent * 100)} % lu</span>
+          <div class="nom">${esc(enCours.title)}</div>
+          <div class="auteur">${esc(enCours.author) || '&nbsp;'}</div>
+          ${progres(enCours)}
         </div>
       </div>`;
   }
@@ -558,20 +618,24 @@ window.addEventListener('drop', (e) => {
 let book = null, rendition = null, livreId = null, sommairePlat = [];
 let minuterieSauvegarde = null, derniereProgression = null, locationsPretes = false;
 
-// Couleurs des thèmes de lecture : [fond, texte, liens]
+// Couleurs des ambiances dans le livre : [fond, texte, liens, fond de l'application]
 const THEMES = {
-  clair: ['#ffffff', '#222222', '#1a5fb4'],
-  sepia: ['#f4ecd8', '#5b4636', '#8a4b14'],
-  sombre: ['#000000', '#f0f0f0', '#8ab4f8'],
+  nuit: ['#141918', '#DCE4E0', '#2E9E7B', '#0E1211'],
+  abysse: ['#0F1D20', '#D5E2E3', '#3FA8B2', '#0A1416'],
+  tamisee: ['#101312', '#AEB9B3', '#2A7F65', '#0B0D0C'],
 };
+const COULEURS_SURLIGNAGE = { emeraude: '#2E9E7B', canard: '#23848E' };
+const URL_POLICES = 'https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=Lora:ital,wght@0,400;0,600;1,400&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&display=swap';
 
 // Une seule feuille de style "liseuse" par page du livre, réécrite à chaque changement de réglage
 // (les thèmes intégrés à epub.js s'empilent au lieu de se remplacer).
 function cssLecture() {
-  const [fond, texte, lien] = THEMES[prefs.theme] || THEMES.sombre;
-  const police = prefs.police ? `font-family: ${prefs.police} !important;` : '';
+  const [fond, texte, lien] = THEMES[prefs.theme] || THEMES.nuit;
+  const police = prefs.police ? `font-family: "${prefs.police}", Georgia, serif !important;` : '';
   return `
+    @import url("${URL_POLICES}");
     html, body { background: ${fond} !important; color: ${texte} !important; }
+    ::selection { background: ${COULEURS_SURLIGNAGE.emeraude}66; }
     body { line-height: ${prefs.interligne} !important; ${police} }
     body * { color: ${texte} !important; background-color: transparent !important; border-color: ${texte}33 !important; }
     p, li, div, span, blockquote { line-height: ${prefs.interligne} !important; ${police} }
@@ -591,9 +655,12 @@ function injecterCss(doc) {
 
 function appliquerPrefs() {
   const lect = $('#lecteur');
-  lect.classList.remove('theme-clair', 'theme-sepia', 'theme-sombre');
-  lect.classList.add('theme-' + prefs.theme);
-  if (!lect.hidden) document.querySelector('meta[name=theme-color]').content = THEMES[prefs.theme][0];
+  document.body.dataset.ambiance = prefs.theme;
+  const [fondLecture, , , fondAppli] = THEMES[prefs.theme];
+  document.querySelector('meta[name=theme-color]').content = lect.hidden ? fondAppli : fondLecture;
+  $('#tamiseur').style.opacity = String(prefs.tamiseur / 100);
+  $('#tamiseurCurseur').value = prefs.tamiseur;
+  $('#valeurTamiseur').textContent = prefs.tamiseur + ' %';
   lect.classList.toggle('mode-defilement', prefs.mode === 'defilement');
   document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('actif', b.dataset.mode === prefs.mode));
   $('#tailleValeur').textContent = prefs.taille + ' %';
@@ -603,6 +670,7 @@ function appliquerPrefs() {
   if (!rendition) return;
   rendition.themes.fontSize(prefs.taille + '%');
   for (const c of rendition.getContents?.() || []) injecterCss(c.document);
+  if (annotationsLivre.surlignages.length) rafraichirSurlignages(500);
 }
 
 function aplatirSommaire(items, niveau = 0, acc = []) {
@@ -624,7 +692,24 @@ function chapitrePour(href) {
 }
 
 function basculerBarres(forcer) {
+  if (prefs.zen) return; // en mode Zen, les barres restent cachées
   $('#lecteur').classList.toggle('immersif', forcer);
+}
+
+// ---------- Mode Zen : seulement le texte ----------
+function appliquerZen() {
+  const lect = $('#lecteur');
+  lect.classList.toggle('zen', prefs.zen);
+  $('#sortieZen').hidden = !prefs.zen || lect.hidden;
+  $('#btnZen').setAttribute('aria-pressed', String(prefs.zen));
+  if (!prefs.zen) lect.classList.remove('immersif');
+  // La zone de lecture change de taille : on recalcule la mise en page puis les surlignages
+  setTimeout(() => { rendition?.resize?.(); rafraichirSurlignages(); }, 260);
+}
+function basculerZen(actif = !prefs.zen) {
+  prefs.zen = actif; ecrirePrefs();
+  fermerPanneaux();
+  appliquerZen();
 }
 
 function fermerPanneaux() {
@@ -694,8 +779,10 @@ function creerRendu() {
     const zone = $('#zoneLecture');
     let debutX = null, debutY = null, debutT = 0, horizontal = null;
 
+    const texteSelectionne = () => !!doc.getSelection()?.toString().trim();
+
     doc.addEventListener('touchstart', (e) => {
-      if (prefs.mode !== 'pages' || animationEnCours || e.touches.length > 1) return;
+      if (prefs.mode !== 'pages' || animationEnCours || e.touches.length > 1 || texteSelectionne()) return;
       const t = e.touches[0];
       debutX = t.screenX; debutY = t.screenY; debutT = Date.now(); horizontal = null;
       zone.style.transition = 'none';
@@ -720,7 +807,8 @@ function creerRendu() {
       const vitesse = Math.abs(dx) / Math.max(1, Date.now() - debutT);
       const etaitHorizontal = horizontal;
       debutX = null; horizontal = null;
-      if (!etaitHorizontal) { annulerGlissement(); return; }
+      // Pendant une sélection de texte (appui long), on ne tourne pas la page
+      if (!etaitHorizontal || texteSelectionne()) { annulerGlissement(); return; }
       // On tourne si le doigt a parcouru assez de distance, ou s'il a été lancé rapidement
       if (Math.abs(dx) > zone.clientWidth * 0.18 || (Math.abs(dx) > 25 && vitesse > 0.35)) {
         dx < 0 ? pageSuivante() : pagePrecedente();
@@ -733,7 +821,8 @@ function creerRendu() {
 
     doc.addEventListener('click', (e) => {
       if (e.target.closest('a')) return;
-      if (doc.getSelection()?.toString()) return;
+      if (texteSelectionne()) return;
+      $('#barreSurlignage').hidden = true;
       if (prefs.mode !== 'pages') return basculerBarres(); // défilement : un toucher affiche/cache les barres
       const cadre = contents.window.frameElement.getBoundingClientRect();
       const z = zone.getBoundingClientRect();
@@ -747,6 +836,163 @@ function creerRendu() {
   });
 
   rendition.on('relocated', surDeplacement);
+  rendition.on('selected', surSelection);
+  rendition.on('resized', () => rafraichirSurlignages());
+  appliquerSurlignages();
+}
+
+// =============== MARQUE-PAGES ET SURLIGNAGES ===============
+// annotationsLivre = { marques: [{ cfi, pct, chapitre, extrait, date }],
+//                      surlignages: [{ cfi, couleur, texte, chapitre, date }] }
+let annotationsLivre = { marques: [], surlignages: [] };
+let selectionEnCours = null;
+
+function sauverAnnotations() {
+  if (!livreId) return;
+  Promise.resolve(api.sauverAnnotations(livreId, annotationsLivre)).catch(() => {});
+  afficherNotes();
+}
+
+// Compare deux positions CFI (-1, 0, 1)
+function comparerCfi(a, b) {
+  try { return new ePub.CFI().compare(a, b); } catch { return a === b ? 0 : (a < b ? -1 : 1); }
+}
+
+// Marque-page dans la page actuellement affichée ?
+function marqueSurLaPage() {
+  const loc = rendition?.currentLocation();
+  if (!loc?.start) return null;
+  return annotationsLivre.marques.find(m =>
+    comparerCfi(m.cfi, loc.start.cfi) >= 0 && comparerCfi(m.cfi, loc.end.cfi) <= 0) || null;
+}
+
+function majBoutonMarque() {
+  const actif = !!marqueSurLaPage();
+  const b = $('#btnMarque');
+  b.setAttribute('aria-pressed', String(actif));
+  b.setAttribute('aria-label', actif ? 'Retirer le marque-page' : 'Ajouter un marque-page');
+}
+
+async function extraitA(cfi) {
+  try {
+    const range = await book.getRange(cfi);
+    const texte = (range.startContainer.textContent || '').slice(range.startOffset);
+    return texte.replace(/\s+/g, ' ').trim().slice(0, 140);
+  } catch { return ''; }
+}
+
+async function basculerMarque() {
+  if (!rendition?.manager) return;
+  const existante = marqueSurLaPage();
+  if (existante) {
+    annotationsLivre.marques = annotationsLivre.marques.filter(m => m !== existante);
+  } else {
+    const loc = rendition.currentLocation();
+    annotationsLivre.marques.push({
+      cfi: loc.start.cfi,
+      pct: derniereProgression?.percent || 0,
+      chapitre: chapitrePour(loc.start.href),
+      extrait: await extraitA(loc.start.cfi),
+      date: Date.now(),
+    });
+    annotationsLivre.marques.sort((a, b) => comparerCfi(a.cfi, b.cfi));
+  }
+  majBoutonMarque();
+  sauverAnnotations();
+}
+
+// Dessine un surlignage dans le livre (un clic dessus propose de le retirer)
+function dessinerSurlignage(s) {
+  try {
+    rendition.annotations.highlight(s.cfi, { couleur: s.couleur }, () => {
+      if (confirm('Retirer ce surlignage ?')) retirerSurlignage(s.cfi);
+    }, 'surlignage-' + s.couleur, {
+      fill: COULEURS_SURLIGNAGE[s.couleur] || COULEURS_SURLIGNAGE.emeraude,
+      'fill-opacity': '0.35',
+      'mix-blend-mode': 'normal',
+    });
+  } catch (err) { console.warn('Surlignage impossible', err); }
+}
+function appliquerSurlignages() {
+  if (!rendition) return;
+  for (const s of annotationsLivre.surlignages) dessinerSurlignage(s);
+}
+// Après un changement de mise en page (Zen, taille du texte, rotation…), les surlignages
+// doivent être recalculés pour suivre le texte.
+let minuterieSurlignages = null;
+function rafraichirSurlignages(delai = 350) {
+  clearTimeout(minuterieSurlignages);
+  minuterieSurlignages = setTimeout(() => {
+    if (!rendition) return;
+    for (const s of annotationsLivre.surlignages) {
+      try { rendition.annotations.remove(s.cfi, 'highlight'); } catch { /* ignoré */ }
+    }
+    appliquerSurlignages();
+  }, delai);
+}
+function retirerSurlignage(cfi) {
+  try { rendition.annotations.remove(cfi, 'highlight'); } catch { /* déjà retiré */ }
+  annotationsLivre.surlignages = annotationsLivre.surlignages.filter(s => s.cfi !== cfi);
+  sauverAnnotations();
+}
+
+// Texte sélectionné dans le livre → on propose de le surligner
+function surSelection(cfiRange, contents) {
+  const texte = contents?.window?.getSelection()?.toString().replace(/\s+/g, ' ').trim() || '';
+  if (!texte) return;
+  selectionEnCours = { cfi: cfiRange, texte: texte.slice(0, 500), contents };
+  $('#barreSurlignage').hidden = false;
+}
+function surligner(couleur) {
+  if (!selectionEnCours) return;
+  const s = {
+    cfi: selectionEnCours.cfi,
+    couleur,
+    texte: selectionEnCours.texte,
+    chapitre: chapitrePour(rendition.currentLocation()?.start?.href),
+    date: Date.now(),
+  };
+  annotationsLivre.surlignages = annotationsLivre.surlignages.filter(x => x.cfi !== s.cfi);
+  annotationsLivre.surlignages.push(s);
+  annotationsLivre.surlignages.sort((a, b) => comparerCfi(a.cfi, b.cfi));
+  dessinerSurlignage(s);
+  annulerSelection();
+  sauverAnnotations();
+}
+function annulerSelection() {
+  try { selectionEnCours?.contents?.window?.getSelection()?.removeAllRanges(); } catch { /* ignoré */ }
+  selectionEnCours = null;
+  $('#barreSurlignage').hidden = true;
+}
+
+// Listes dans le panneau (onglets Marque-pages / Surlignages)
+function afficherNotes() {
+  const { marques, surlignages } = annotationsLivre;
+  $('#listeMarques').innerHTML = marques.length
+    ? marques.map((m, i) => `
+      <div class="element-note" data-aller="${esc(m.cfi)}">
+        <div class="corps">
+          <div class="meta">${esc(m.chapitre || 'Marque-page')} · ${Math.round((m.pct || 0) * 100)} %</div>
+          <div class="extrait">${esc(m.extrait || '…')}</div>
+        </div>
+        <button class="icone petite" data-suppr-marque="${i}" aria-label="Supprimer ce marque-page">✕</button>
+      </div>`).join('')
+    : '<p class="vide-liste">Aucun marque-page pour l’instant. Touche l’icône marque-page en haut de l’écran pour garder ta place.</p>';
+  $('#listeSurlignages').innerHTML = surlignages.length
+    ? surlignages.map((s, i) => `
+      <div class="element-note" data-aller="${esc(s.cfi)}">
+        <div class="corps">
+          <div class="meta">${esc(s.chapitre || 'Surlignage')}</div>
+          <div class="extrait surligne-${esc(s.couleur)}">${esc(s.texte)}</div>
+        </div>
+        <button class="icone petite" data-suppr-surlignage="${i}" aria-label="Supprimer ce surlignage">✕</button>
+      </div>`).join('')
+    : '<p class="vide-liste">Aucun surlignage. Sélectionne un passage du livre (appui long sur téléphone), puis choisis une couleur.</p>';
+}
+
+function changerOnglet(nom) {
+  document.querySelectorAll('.onglet').forEach(o => o.classList.toggle('actif', o.dataset.onglet === nom));
+  document.querySelectorAll('.liste-onglet').forEach(l => { l.hidden = l.dataset.contenu !== nom; });
 }
 
 function surDeplacement(loc) {
@@ -759,6 +1005,8 @@ function surDeplacement(loc) {
   if (locationsPretes) $('#curseur').value = Math.round(pct * 1000);
   document.querySelectorAll('#listeSommaire a').forEach(a => a.classList.toggle('actuel', a.textContent === chapitre));
   derniereProgression = { cfi: loc.start.cfi, percent: pct, chapter: chapitre };
+  majBoutonMarque();
+  $('#barreSurlignage').hidden = true;
   clearTimeout(minuterieSauvegarde);
   minuterieSauvegarde = setTimeout(sauvegarder, 1200);
 }
@@ -778,9 +1026,14 @@ async function ouvrirLivre(id) {
   livreId = id;
   locationsPretes = false;
   const infos = livresCache.find(l => l.id === id) || { title: id };
+  annotationsLivre = { marques: [], surlignages: [] };
+  afficherNotes();
+  changerOnglet('sommaire');
   $('#bibliotheque').hidden = true;
   $('#lecteur').hidden = false;
+  document.body.classList.add('dans-lecteur');
   appliquerPrefs();
+  appliquerZen();
   $('#titreLivre').textContent = infos.title;
   $('#titreChapitre').textContent = '';
   $('#pourcentage').textContent = '…';
@@ -797,7 +1050,12 @@ async function ouvrirLivre(id) {
       book.opened,
       new Promise((_, rejeter) => setTimeout(() => rejeter(new Error('le fichier ne se charge pas')), 30000)),
     ]);
-    const [nav, meta, progres] = await Promise.all([book.loaded.navigation, book.loaded.metadata, api.progression(id)]);
+    const [nav, meta, progres, notes] = await Promise.all([
+      book.loaded.navigation, book.loaded.metadata, api.progression(id), Promise.resolve(api.annotations(id)).catch(() => ({})),
+    ]);
+    annotationsLivre = { marques: notes?.marques || [], surlignages: notes?.surlignages || [] };
+    afficherNotes();
+    appliquerSurlignages();
     sommairePlat = aplatirSommaire(nav.toc || []);
     $('#listeSommaire').innerHTML = sommairePlat.length
       ? sommairePlat.map((it, i) => `<a href="#" data-i="${i}" class="${it.niveau ? 'sous' : ''}">${esc(it.label)}</a>`).join('')
@@ -851,9 +1109,13 @@ async function fermerLivre() {
   book = null; rendition = null; livreId = null; derniereProgression = null;
   const zone = $('#zoneLecture');
   zone.style.transform = ''; zone.style.opacity = ''; zone.style.transition = '';
+  annulerSelection();
+  fermerPanneaux();
   $('#lecteur').hidden = true;
+  $('#sortieZen').hidden = true;
   $('#bibliotheque').hidden = false;
-  document.querySelector('meta[name=theme-color]').content = '#1f1b16';
+  document.body.classList.remove('dans-lecteur');
+  appliquerPrefs();
   afficherBibliotheque();
 }
 
@@ -861,7 +1123,12 @@ function gererClavier(e) {
   if (!rendition?.manager) return; // livre pas encore affiché
   if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { e.preventDefault(); pageSuivante(); }
   else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); pagePrecedente(); }
-  else if (e.key === 'Escape') { if (!$('#panneauSommaire').hidden || !$('#panneauReglages').hidden) fermerPanneaux(); else history.back(); }
+  else if (e.key === 'Escape') {
+    if (!$('#barreSurlignage').hidden) annulerSelection();
+    else if (!$('#panneauSommaire').hidden || !$('#panneauReglages').hidden) fermerPanneaux();
+    else if (prefs.zen) basculerZen(false);
+    else history.back();
+  }
 }
 document.addEventListener('keydown', (e) => { if (!$('#lecteur').hidden) gererClavier(e); });
 
@@ -873,6 +1140,29 @@ $('#pageSuiv').addEventListener('click', pageSuivante);
 $('#choixMode').addEventListener('click', (e) => { const b = e.target.closest('[data-mode]'); if (b) changerMode(b.dataset.mode); });
 $('#btnSommaire').addEventListener('click', () => { $('#panneauReglages').hidden = true; $('#panneauSommaire').hidden = !$('#panneauSommaire').hidden; $('#listeSommaire .actuel')?.scrollIntoView({ block: 'center' }); });
 $('#btnReglages').addEventListener('click', () => { $('#panneauSommaire').hidden = true; $('#panneauReglages').hidden = !$('#panneauReglages').hidden; });
+$('#btnAmbiance').addEventListener('click', () => { $('#panneauReglages').hidden = !$('#panneauReglages').hidden; });
+$('#btnZen').addEventListener('click', () => basculerZen(true));
+$('#sortieZen').addEventListener('click', () => basculerZen(false));
+$('#btnMarque').addEventListener('click', basculerMarque);
+$('#tamiseurCurseur').addEventListener('input', (e) => { prefs.tamiseur = Number(e.target.value); ecrirePrefs(); appliquerPrefs(); });
+
+// Onglets du panneau : Sommaire / Marque-pages / Surlignages
+document.querySelectorAll('.onglet').forEach(o => o.addEventListener('click', () => changerOnglet(o.dataset.onglet)));
+['#listeMarques', '#listeSurlignages'].forEach(sel => $(sel).addEventListener('click', (e) => {
+  const supprM = e.target.closest('[data-suppr-marque]');
+  const supprS = e.target.closest('[data-suppr-surlignage]');
+  if (supprM) {
+    annotationsLivre.marques.splice(+supprM.dataset.supprMarque, 1);
+    majBoutonMarque(); sauverAnnotations(); return;
+  }
+  if (supprS) { retirerSurlignage(annotationsLivre.surlignages[+supprS.dataset.supprSurlignage].cfi); return; }
+  const aller = e.target.closest('[data-aller]');
+  if (aller) { rendition.display(aller.dataset.aller); fermerPanneaux(); basculerBarres(true); }
+}));
+
+// Barre de surlignage
+document.querySelectorAll('.puce-couleur').forEach(b => b.addEventListener('click', () => surligner(b.dataset.couleur)));
+$('#annulerSurlignage').addEventListener('click', annulerSelection);
 document.querySelectorAll('[data-ferme]').forEach(b => b.addEventListener('click', () => { $('#' + b.dataset.ferme).hidden = true; }));
 
 $('#listeSommaire').addEventListener('click', (e) => {

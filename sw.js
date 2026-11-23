@@ -1,7 +1,7 @@
 // Service worker : garde une copie de l'application pour qu'elle marche sans connexion.
 // (Les livres, eux, sont déjà enregistrés dans le navigateur, pas ici.)
 // Change le numéro de version à chaque mise à jour du site.
-const VERSION = 'liseuse-v4';
+const VERSION = 'liseuse-v5';
 
 const FICHIERS = [
   './',
