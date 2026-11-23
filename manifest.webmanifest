@@ -1,0 +1,13 @@
+{
+  "name": "Ma Liseuse",
+  "short_name": "Liseuse",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f6f1e9",
+  "theme_color": "#1f1b16",
+  "lang": "fr",
+  "icons": [
+    { "src": "icone.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1f1b16">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Ma Liseuse</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icone.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icone.svg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ===== Connexion (bibliothèque en ligne) ===== -->
+  <section id="connexion" class="vue" hidden>
+    <form id="formConnexion" class="carte-connexion">
+      <h1>Ma Liseuse</h1>
+      <p class="petit">Connecte-toi pour retrouver tes livres et ta progression sur tous tes appareils.</p>
+      <label>Email
+        <input id="email" type="email" autocomplete="username" required>
+      </label>
+      <label>Mot de passe
+        <input id="motDePasse" type="password" autocomplete="current-password" required>
+      </label>
+      <p id="erreurConnexion" class="erreur" hidden></p>
+      <p id="infoConnexion" class="info" hidden></p>
+      <button type="submit" class="bouton principal" id="btnConnexion">Se connecter</button>
+      <button type="button" class="lien" id="btnOubli">Mot de passe oublié ?</button>
+    </form>
+  </section>
+
+  <!-- ===== Choisir son mot de passe (invitation ou mot de passe oublié) ===== -->
+  <section id="nouveauMdp" class="vue" hidden>
+    <form id="formNouveauMdp" class="carte-connexion">
+      <h1>Ma Liseuse</h1>
+      <p id="texteNouveauMdp" class="petit">Choisis ton mot de passe pour la liseuse.</p>
+      <label>Nouveau mot de passe
+        <input id="mdp1" type="password" autocomplete="new-password" minlength="8" required>
+      </label>
+      <label>Confirme le mot de passe
+        <input id="mdp2" type="password" autocomplete="new-password" minlength="8" required>
+      </label>
+      <p id="erreurNouveauMdp" class="erreur" hidden></p>
+      <button type="submit" class="bouton principal" id="btnNouveauMdp">Enregistrer</button>
+    </form>
+  </section>
+
+  <!-- ===== Bibliothèque ===== -->
+  <section id="bibliotheque" class="vue" hidden>
+    <header class="barre">
+      <h1>Ma Liseuse</h1>
+      <label class="bouton principal">
+        + Ajouter des livres
+        <input id="choixFichiers" type="file" accept=".epub,application/epub+zip" multiple hidden>
+      </label>
+      <button id="btnDeconnexion" class="icone seulement-cloud" title="Se déconnecter" aria-label="Se déconnecter">⎋</button>
+    </header>
+
+    <div id="zoneDepot" class="depot" hidden>Dépose tes fichiers EPUB ici</div>
+    <p id="message" class="message" hidden></p>
+    <div id="transfert" class="transfert" hidden>
+      <span id="texteTransfert"></span>
+      <button id="btnTransfert" class="bouton">Envoyer</button>
+    </div>
+
+    <section id="reprendre" hidden>
+      <h2>Reprendre la lecture</h2>
+      <div id="carteReprendre"></div>
+    </section>
+
+    <h2 id="titreListe">Tous mes livres</h2>
+    <div id="grille" class="grille"></div>
+    <div id="vide" class="vide" hidden>
+      <p>Ta bibliothèque est vide.</p>
+      <p class="seulement-serveur">Clique sur <strong>+ Ajouter des livres</strong> pour importer tes fichiers <code>.epub</code>,
+         ou copie-les directement dans le dossier <code>livres</code> du projet.</p>
+      <p class="seulement-appareil">Clique sur <strong>+ Ajouter des livres</strong> pour importer tes fichiers <code>.epub</code>.
+         Ils restent enregistrés sur cet appareil, même sans connexion, et ne sont envoyés nulle part.</p>
+      <p class="seulement-cloud">Clique sur <strong>+ Ajouter des livres</strong> pour importer tes fichiers <code>.epub</code>.
+         Ils sont rangés dans ton espace privé et tu les retrouves sur tous tes appareils.</p>
+      <p class="petit">Livres français gratuits et légaux : Gallica (BnF), Ebooks libres et gratuits, Projet Gutenberg.</p>
+    </div>
+  </section>
+
+  <!-- ===== Lecteur ===== -->
+  <section id="lecteur" class="vue" hidden>
+    <header id="barreHaut" class="barre lecteur-barre">
+      <button id="btnRetour" class="icone" title="Retour à la bibliothèque" aria-label="Retour">←</button>
+      <div class="titres">
+        <div id="titreLivre" class="titre-livre"></div>
+        <div id="titreChapitre" class="titre-chapitre"></div>
+      </div>
+      <button id="btnSommaire" class="icone" title="Sommaire" aria-label="Sommaire">☰</button>
+      <button id="btnReglages" class="icone" title="Affichage" aria-label="Réglages d'affichage">Aa</button>
+    </header>
+
+    <div id="zoneLecture"></div>
+    <button id="pagePrec" class="tourne gauche" aria-label="Page précédente">‹</button>
+    <button id="pageSuiv" class="tourne droite" aria-label="Page suivante">›</button>
+
+    <footer id="barreBas" class="barre lecteur-bas">
+      <input id="curseur" type="range" min="0" max="1000" value="0" disabled aria-label="Position dans le livre">
+      <span id="pourcentage">…</span>
+    </footer>
+
+    <!-- Panneau sommaire -->
+    <aside id="panneauSommaire" class="panneau" hidden>
+      <div class="panneau-tete"><h3>Sommaire</h3><button class="icone fermer" data-ferme="panneauSommaire">✕</button></div>
+      <nav id="listeSommaire"></nav>
+    </aside>
+
+    <!-- Panneau réglages -->
+    <aside id="panneauReglages" class="panneau" hidden>
+      <div class="panneau-tete"><h3>Affichage</h3><button class="icone fermer" data-ferme="panneauReglages">✕</button></div>
+      <div class="reglage">
+        <span>Taille du texte</span>
+        <div class="groupe">
+          <button id="taillMoins" class="bouton">A−</button>
+          <span id="tailleValeur">100 %</span>
+          <button id="taillPlus" class="bouton">A+</button>
+        </div>
+      </div>
+      <div class="reglage">
+        <span>Thème</span>
+        <div class="groupe" id="choixTheme">
+          <button class="pastille" data-theme="clair" style="background:#fff;color:#222">Clair</button>
+          <button class="pastille" data-theme="sepia" style="background:#f4ecd8;color:#5b4636">Sépia</button>
+          <button class="pastille" data-theme="sombre" style="background:#000;color:#fff">Noir</button>
+        </div>
+      </div>
+      <div class="reglage">
+        <span>Mode de lecture</span>
+        <div class="groupe" id="choixMode">
+          <button class="pastille" data-mode="defilement">↕ Défilement</button>
+          <button class="pastille" data-mode="pages">↔ Pages</button>
+        </div>
+      </div>
+      <div class="reglage">
+        <span>Police</span>
+        <div class="groupe" id="choixPolice">
+          <button class="pastille" data-police="Georgia, serif" style="font-family:Georgia,serif">Serif</button>
+          <button class="pastille" data-police="system-ui, sans-serif" style="font-family:system-ui,sans-serif">Sans</button>
+          <button class="pastille" data-police="">Livre</button>
+        </div>
+      </div>
+      <div class="reglage">
+        <span>Interligne</span>
+        <div class="groupe" id="choixInterligne">
+          <button class="pastille" data-interligne="1.3">Serré</button>
+          <button class="pastille" data-interligne="1.6">Normal</button>
+          <button class="pastille" data-interligne="1.9">Aéré</button>
+        </div>
+      </div>
+    </aside>
+  </section>
+
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
