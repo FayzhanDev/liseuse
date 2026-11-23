@@ -1,7 +1,7 @@
 // Service worker : garde une copie de l'application pour qu'elle marche sans connexion.
 // (Les livres, eux, sont déjà enregistrés dans le navigateur, pas ici.)
 // Change le numéro de version à chaque mise à jour du site (le même que VERSION_APPLI dans app.js).
-const VERSION = 'liseuse-v8';
+const VERSION = 'liseuse-v9';
 
 const FICHIERS_SITE = ['./', 'index.html', 'style.css', 'app.js', 'config.js', 'manifest.webmanifest', 'icone.svg'];
 const FICHIERS_CDN = [

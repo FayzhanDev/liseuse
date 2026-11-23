@@ -6,7 +6,7 @@
 'use strict';
 
 // Numéro de version affiché en bas du panneau « Aa » (le même que VERSION dans sw.js)
-const VERSION_APPLI = '8';
+const VERSION_APPLI = '9';
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1000,13 +1000,34 @@ function annulerGlissement() {
   setTimeout(() => { zone.style.transition = ''; }, 200);
 }
 
+// ---------- Sécurité : nettoyage de chaque chapitre avant affichage ----------
+// Safari (iPhone) ne transmet les touchers à la liseuse que si le cadre du livre autorise les scripts.
+// On les autorise donc, MAIS on retire tout code du livre avant de l'afficher :
+// un EPUB piégé ne peut ainsi rien exécuter (ni lire ta session de connexion).
+const BALISES_INTERDITES = 'script, iframe, frame, frameset, object, embed, applet, base, form, meta[http-equiv]';
+function nettoyerChapitre(doc) {
+  doc.querySelectorAll(BALISES_INTERDITES).forEach(el => el.remove());
+  for (const el of doc.querySelectorAll('*')) {
+    for (const attr of [...el.attributes]) {
+      const nom = attr.name.toLowerCase();
+      const valeur = attr.value.replace(/[\s\u0000-\u001f]/g, '').toLowerCase();
+      if (nom.startsWith('on')) el.removeAttribute(attr.name); // onclick, onload, onerror…
+      else if (/(^|:)(href|src|action|formaction|data|xlink:href)$/.test(nom) &&
+               (valeur.startsWith('javascript:') || valeur.startsWith('vbscript:') || valeur.startsWith('data:text/html'))) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  }
+}
+
 // Crée l'affichage du livre selon le mode choisi (pages ou défilement)
 function creerRendu() {
   const defilement = prefs.mode === 'defilement';
   $('#zoneLecture').innerHTML = '';
+  // allowScriptedContent: true est nécessaire pour Safari iOS (voir nettoyerChapitre plus haut)
   rendition = book.renderTo('zoneLecture', defilement
-    ? { width: '100%', height: '100%', flow: 'scrolled', manager: 'continuous', allowScriptedContent: false }
-    : { width: '100%', height: '100%', flow: 'paginated', spread: 'auto', minSpreadWidth: 900, allowScriptedContent: false });
+    ? { width: '100%', height: '100%', flow: 'scrolled', manager: 'continuous', allowScriptedContent: true }
+    : { width: '100%', height: '100%', flow: 'paginated', spread: 'auto', minSpreadWidth: 900, allowScriptedContent: true });
   appliquerPrefs();
 
   // Gestes (glisser / toucher / clavier) à l'intérieur du livre
@@ -1305,6 +1326,8 @@ async function ouvrirLivre(id) {
 
   try {
     book = ePub(await api.source(id));
+    // Chaque chapitre est nettoyé dès son chargement, avant d'être mis dans la page
+    book.spine.hooks.content.register((doc) => nettoyerChapitre(doc));
     creerRendu();
     await Promise.race([
       book.opened,
