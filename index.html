@@ -99,13 +99,25 @@
       </section>
 
       <div class="entete-section" id="titreListe">
-        <div>
-          <h2 class="titre-section">Bibliothèque de la veillée</h2>
-          <p class="petit doux">Choisis un livre pour l’ouvrir en lumière tamisée.</p>
+        <div class="min0">
+          <nav id="filAriane" class="fil-ariane" aria-label="Dossiers" hidden></nav>
+          <h2 class="titre-section" id="titreDossier">Bibliothèque de la veillée</h2>
+          <p class="petit doux" id="sousTitreDossier">Choisis un livre pour l’ouvrir en lumière tamisée.</p>
         </div>
         <span class="compteur" id="compteurLivres"></span>
       </div>
       <div id="grille" class="grille"></div>
+      <p id="dossierVide" class="vide-liste" hidden>Ce dossier est vide.</p>
+
+      <!-- Espace utilisé -->
+      <section id="espace" class="espace" hidden>
+        <div class="espace-ligne">
+          <span>Espace utilisé</span>
+          <b id="espaceTexte"></b>
+        </div>
+        <div class="jauge"><div id="espaceJauge" style="width:0%"></div></div>
+        <p class="petit doux" id="espaceDetail"></p>
+      </section>
 
       <div id="vide" class="vide" hidden>
         <p>Ta bibliothèque est vide.</p>
@@ -121,6 +133,23 @@
   </section>
 
   <div id="zoneDepot" class="depot" hidden>Dépose tes fichiers EPUB ici</div>
+
+  <!-- Fenêtre « Ranger dans un dossier » -->
+  <dialog id="dialogueRanger" class="dialogue">
+    <form method="dialog" id="formRanger">
+      <h3 id="titreRanger">Ranger le livre</h3>
+      <p class="petit doux">Choisis un dossier, ou crée-en un nouveau. Un dossier peut en contenir d’autres
+        (par exemple « ASOIAF » puis « Le Trône de fer »).</p>
+      <div id="listeDossiers" class="liste-dossiers" role="radiogroup" aria-label="Dossiers"></div>
+      <label class="champ">Nouveau dossier <span class="doux" id="nouveauDans"></span>
+        <input id="nomNouveauDossier" type="text" maxlength="60" placeholder="ex. ASOIAF ou Le Trône de fer" autocomplete="off">
+      </label>
+      <div class="actions">
+        <button type="button" class="bouton" id="annulerRanger">Annuler</button>
+        <button type="submit" class="bouton principal" id="validerRanger">Ranger ici</button>
+      </div>
+    </form>
+  </dialog>
 
   <!-- ===== Lecteur ===== -->
   <section id="lecteur" class="vue" hidden>

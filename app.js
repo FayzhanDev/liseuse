@@ -62,6 +62,9 @@ const apiServeur = {
   },
   sauverLocations: (id, txt) => fetch('/api/books/' + encodeURIComponent(id) + '/locations', { method: 'PUT', body: txt }),
   source: async (id) => '/livres/' + encodeURIComponent(id),
+  ranger: (id, dossier) => fetch('/api/books/' + encodeURIComponent(id) + '/meta', {
+    method: 'PUT', body: JSON.stringify({ dossier }), headers: { 'Content-Type': 'application/json' },
+  }),
   annotations: (id) => fetch('/api/books/' + encodeURIComponent(id) + '/annotations').then(r => (r.ok ? r.json() : {})),
   sauverAnnotations: (id, data) => fetch('/api/books/' + encodeURIComponent(id) + '/annotations', {
     method: 'PUT', body: JSON.stringify(data), keepalive: true, headers: { 'Content-Type': 'application/json' },
@@ -141,6 +144,10 @@ const apiAppareil = {
     if (!donnees) throw new Error('fichier absent de cet appareil');
     return donnees;
   },
+  async ranger(id, dossier) {
+    const l = await lire('livres', id);
+    if (l) { l.dossier = dossier; await ecrire('livres', l); }
+  },
   async annotations(id) { return (await lire('livres', id))?.annotations || {}; },
   async sauverAnnotations(id, data) {
     const l = await lire('livres', id);
@@ -172,7 +179,7 @@ const apiCloud = {
   async livres() {
     const attente = lireAttente();
     try {
-      const lignes = await verifier(await sb.from('livres').select('id,title,author,cover,size,fichier,added,progress,annotations'));
+      const lignes = await verifier(await sb.from('livres').select('id,title,author,cover,size,fichier,added,progress,annotations,dossier'));
       const liste = lignes.map(l => ({ ...l, added: Date.parse(l.added), progress: plusRecente(l.progress, attente[l.id]) }));
       // Copie locale de la liste (pour le mode hors connexion)
       await cache.vider('livres');
@@ -250,6 +257,11 @@ const apiCloud = {
     const donnees = await blob.arrayBuffer();
     await cache.ecrire('fichiers', donnees, id); // gardé sur l'appareil pour la prochaine fois
     return donnees;
+  },
+  async ranger(id, dossier) {
+    await verifier(await sb.from('livres').update({ dossier }).eq('id', id));
+    const local = await cache.lire('livres', id);
+    if (local) { local.dossier = dossier; await cache.ecrire('livres', local); }
   },
   async annotations(id) {
     const enAttente = lireAttenteNotes()[id];
@@ -464,6 +476,7 @@ $('#btnTransfert').addEventListener('click', async () => {
       }
       const loc = await l.depuis.locations(l.id).catch(() => null);
       if (loc) await apiCloud.sauverLocations(l.id, loc);
+      if (l.dossier) await apiCloud.ranger(l.id, l.dossier);
       const notes = await l.depuis.annotations(l.id).catch(() => null);
       if (notes?.marques?.length || notes?.surlignages?.length) {
         await verifier(await sb.from('livres').update({ annotations: notes }).eq('id', l.id));
@@ -515,14 +528,55 @@ function htmlCouverture(l) {
     : `<div class="sans-image">${esc(l.title)}</div>`;
 }
 
+// ---------- Dossiers ----------
+// Chaque livre a un champ "dossier" : un chemin comme "ASOIAF/Le Trône de fer" ("" = racine).
+// Les dossiers n'existent que s'ils contiennent au moins un livre (directement ou dans un sous-dossier).
+let dossierCourant = '';
+try { dossierCourant = sessionStorage.getItem('liseuse.dossier') || ''; } catch { /* ignoré */ }
+
+const nettoyerNom = (nom) => String(nom || '').replace(/\//g, '-').replace(/\s+/g, ' ').trim().slice(0, 60);
+const parent = (chemin) => chemin.split('/').slice(0, -1).join('/');
+const dernierNom = (chemin) => chemin.split('/').pop();
+const dansDossier = (l, chemin) => (l.dossier || '') === chemin || (l.dossier || '').startsWith(chemin + '/');
+// Numéro de tome trouvé dans le titre : « Tome 3 », « L'intégrale 1 », « Vol. 2 », « Livre 4 », « #5 »…
+function numeroTome(titre) {
+  const m = String(titre || '').match(/(?:tome|t\.|vol(?:ume)?\.?|int[ée]grale|livre|partie|#)\s*[-:]?\s*(\d+)/i);
+  return m ? Number(m[1]) : Infinity;
+}
+// Tri des livres d'un dossier : d'abord par numéro de tome, puis par titre
+const trierTitres = (a, b) => (numeroTome(a.title) - numeroTome(b.title)) ||
+  (a.title || '').localeCompare(b.title || '', 'fr', { numeric: true });
+
+// Tous les dossiers existants (et leurs parents), triés
+function tousLesDossiers() {
+  const set = new Set();
+  for (const l of livresCache) {
+    const parts = (l.dossier || '').split('/').filter(Boolean);
+    parts.forEach((_, i) => set.add(parts.slice(0, i + 1).join('/')));
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, 'fr', { numeric: true }));
+}
+
+function allerDossier(chemin) {
+  dossierCourant = chemin;
+  try { sessionStorage.setItem('liseuse.dossier', chemin); } catch { /* ignoré */ }
+  rendreBibliotheque();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+const ICONE_DOSSIER = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
+
 async function afficherBibliotheque() {
   livresCache = await api.livres();
+  rendreBibliotheque();
+}
+
+function rendreBibliotheque() {
   const grille = $('#grille');
   $('#vide').hidden = livresCache.length > 0;
   $('#titreListe').hidden = livresCache.length === 0;
-
-  const n = livresCache.length;
-  $('#compteurLivres').textContent = `${n} livre${n > 1 ? 's' : ''}`;
+  // Si le dossier courant n'existe plus (livres déplacés ou supprimés), on remonte
+  while (dossierCourant && !livresCache.some(l => dansDossier(l, dossierCourant))) dossierCourant = parent(dossierCourant);
 
   const progres = (l) => {
     const pct = Math.round((l.progress?.percent || 0) * 100);
@@ -531,7 +585,41 @@ async function afficherBibliotheque() {
       <div class="jauge"><div style="width:${pct}%"></div></div>`;
   };
 
-  grille.innerHTML = livresCache.map(l => `
+  // Sous-dossiers directs du dossier courant
+  const prefixe = dossierCourant ? dossierCourant + '/' : '';
+  const sousDossiers = [...new Set(livresCache
+    .map(l => l.dossier || '')
+    .filter(d => d.startsWith(prefixe) && d.length > prefixe.length)
+    .map(d => prefixe + d.slice(prefixe.length).split('/')[0]))]
+    .sort((a, b) => a.localeCompare(b, 'fr', { numeric: true }));
+  const livresIci = livresCache.filter(l => (l.dossier || '') === dossierCourant).sort(trierTitres);
+
+  const carteDossier = (chemin) => {
+    const contenu = livresCache.filter(l => dansDossier(l, chemin));
+    const nbSous = new Set(contenu.map(l => l.dossier).filter(d => d !== chemin).map(d => d.slice(chemin.length + 1).split('/')[0])).size;
+    const couvertures = contenu.filter(l => l.cover).sort(trierTitres).slice(0, 4);
+    const lus = contenu.filter(l => (l.progress?.percent || 0) >= 0.995).length;
+    const pct = Math.round(contenu.reduce((s, l) => s + (l.progress?.percent || 0), 0) / Math.max(1, contenu.length) * 100);
+    return `
+      <article class="livre dossier" data-dossier="${esc(chemin)}" tabindex="0">
+        <div class="couverture">${couvertures.length
+          ? `<div class="mosaique">${couvertures.map(l => `<img src="${esc(l.cover)}" alt="" loading="lazy">`).join('')}</div>`
+          : `<span class="icone-dossier">${ICONE_DOSSIER}</span>`}</div>
+        <div class="infos">
+          <div class="badge-dossier">Dossier</div>
+          <div class="nom">${esc(dernierNom(chemin))}</div>
+          <div class="auteur">${contenu.length} livre${contenu.length > 1 ? 's' : ''}${nbSous ? ` · ${nbSous} sous-dossier${nbSous > 1 ? 's' : ''}` : ''}${lus ? ` · ${lus} terminé${lus > 1 ? 's' : ''}` : ''}</div>
+          <div class="ligne-progres"><span>Progression moyenne</span><b>${pct} %</b></div>
+          <div class="jauge"><div style="width:${pct}%"></div></div>
+        </div>
+        <div class="actions-carte">
+          <button class="mini" data-renommer-dossier="${esc(chemin)}" title="Renommer ou déplacer ce dossier" aria-label="Renommer le dossier">✎</button>
+          <button class="mini" data-suppr-dossier="${esc(chemin)}" title="Supprimer le dossier (les livres sont gardés)" aria-label="Supprimer le dossier">✕</button>
+        </div>
+      </article>`;
+  };
+
+  grille.innerHTML = sousDossiers.map(carteDossier).join('') + livresIci.map(l => `
       <article class="livre" data-id="${esc(l.id)}" tabindex="0">
         <div class="couverture">${htmlCouverture(l)}</div>
         <div class="infos">
@@ -539,10 +627,32 @@ async function afficherBibliotheque() {
           <div class="auteur">${esc(l.author) || '&nbsp;'}</div>
           ${progres(l)}
         </div>
-        <button class="suppr" data-suppr="${esc(l.id)}" title="Supprimer ce livre" aria-label="Supprimer">✕</button>
+        <div class="actions-carte">
+          <button class="mini" data-ranger="${esc(l.id)}" title="Ranger dans un dossier" aria-label="Ranger dans un dossier">${ICONE_DOSSIER.replace(/18/g, '14')}</button>
+          <button class="mini" data-suppr="${esc(l.id)}" title="Supprimer ce livre" aria-label="Supprimer">✕</button>
+        </div>
       </article>`).join('');
+  $('#dossierVide').hidden = !(livresCache.length && !sousDossiers.length && !livresIci.length);
 
-  const enCours = livresCache.find(l => l.progress && l.progress.percent < 0.995);
+  // En-tête : racine ou dossier (avec fil d'Ariane)
+  const total = dossierCourant ? livresCache.filter(l => dansDossier(l, dossierCourant)).length : livresCache.length;
+  $('#compteurLivres').textContent = `${total} livre${total > 1 ? 's' : ''}`;
+  if (dossierCourant) {
+    const parts = dossierCourant.split('/');
+    $('#filAriane').innerHTML = `<button data-chemin="">Bibliothèque</button>` + parts.map((p, i) =>
+      `<span class="sep">›</span>${i < parts.length - 1 ? `<button data-chemin="${esc(parts.slice(0, i + 1).join('/'))}">${esc(p)}</button>` : `<span>${esc(p)}</span>`}`).join('');
+    $('#filAriane').hidden = false;
+    $('#titreDossier').textContent = dernierNom(dossierCourant);
+    $('#sousTitreDossier').textContent = 'Les livres de ce dossier, rangés par titre.';
+  } else {
+    $('#filAriane').hidden = true;
+    $('#titreDossier').textContent = 'Bibliothèque de la veillée';
+    $('#sousTitreDossier').textContent = 'Choisis un livre ou un dossier pour l’ouvrir en lumière tamisée.';
+  }
+
+  afficherEspace();
+
+  const enCours = !dossierCourant && livresCache.find(l => l.progress && l.progress.percent < 0.995);
   $('#reprendre').hidden = !enCours;
   if (enCours) {
     $('#carteReprendre').innerHTML = `
@@ -558,6 +668,18 @@ async function afficherBibliotheque() {
 }
 
 document.addEventListener('click', async (e) => {
+  // Dossiers : fil d'Ariane, ranger, renommer, supprimer, ouvrir
+  const chemin = e.target.closest('#filAriane [data-chemin]');
+  if (chemin) return allerDossier(chemin.dataset.chemin);
+  const ranger = e.target.closest('[data-ranger]');
+  if (ranger) { e.stopPropagation(); return ouvrirRanger(ranger.dataset.ranger); }
+  const renommer = e.target.closest('[data-renommer-dossier]');
+  if (renommer) { e.stopPropagation(); return renommerDossier(renommer.dataset.renommerDossier); }
+  const supprDossier = e.target.closest('[data-suppr-dossier]');
+  if (supprDossier) { e.stopPropagation(); return supprimerDossier(supprDossier.dataset.supprDossier); }
+  const dossier = e.target.closest('#bibliotheque [data-dossier]');
+  if (dossier) return allerDossier(dossier.dataset.dossier);
+
   const suppr = e.target.closest('[data-suppr]');
   if (suppr) {
     e.stopPropagation();
@@ -577,8 +699,120 @@ document.addEventListener('click', async (e) => {
   if (carte) ouvrirLivre(carte.dataset.id);
 });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && e.target.matches?.('.livre')) ouvrirLivre(e.target.dataset.id);
+  if (e.key !== 'Enter' || !e.target.matches?.('.livre')) return;
+  if (e.target.dataset.dossier !== undefined) allerDossier(e.target.dataset.dossier);
+  else ouvrirLivre(e.target.dataset.id);
 });
+
+// Déplace plusieurs livres d'un coup (renommer / supprimer un dossier)
+async function deplacerLivres(livres, nouveauChemin) {
+  for (const { id, dossier } of livres) await api.ranger(id, nouveauChemin(dossier));
+}
+
+async function renommerDossier(chemin) {
+  const nouveau = prompt(
+    `Nouveau nom pour « ${dernierNom(chemin)} ».\nTu peux aussi le déplacer en écrivant un chemin avec « / », par exemple :  ASOIAF/${dernierNom(chemin)}`,
+    chemin,
+  );
+  if (nouveau === null) return;
+  const propre = nouveau.split('/').map(nettoyerNom).filter(Boolean).join('/');
+  if (!propre || propre === chemin) return;
+  if (propre.startsWith(chemin + '/')) return message('Un dossier ne peut pas être rangé dans lui-même.', 5000);
+  const concernes = livresCache.filter(l => dansDossier(l, chemin)).map(l => ({ id: l.id, dossier: l.dossier }));
+  try {
+    message('Renommage…', 0);
+    await deplacerLivres(concernes, (d) => propre + d.slice(chemin.length));
+    message('Dossier renommé ✔');
+    if (dossierCourant === chemin || dossierCourant.startsWith(chemin + '/')) dossierCourant = propre + dossierCourant.slice(chemin.length);
+    await afficherBibliotheque();
+  } catch (err) { message('Erreur : ' + err.message, 8000); }
+}
+
+async function supprimerDossier(chemin) {
+  const haut = parent(chemin);
+  const concernes = livresCache.filter(l => dansDossier(l, chemin)).map(l => ({ id: l.id, dossier: l.dossier }));
+  if (!confirm(`Supprimer le dossier « ${dernierNom(chemin)} » ?\nSes ${concernes.length} livre(s) ne sont pas effacés : ils sont remis dans « ${haut ? dernierNom(haut) : 'Bibliothèque'} ».`)) return;
+  try {
+    // Les sous-dossiers remontent d'un niveau avec leurs livres
+    await deplacerLivres(concernes, (d) => [haut, d.slice(chemin.length + 1)].filter(Boolean).join('/'));
+    message('Dossier supprimé, livres conservés ✔');
+    await afficherBibliotheque();
+  } catch (err) { message('Erreur : ' + err.message, 8000); }
+}
+
+// ---------- Fenêtre « Ranger dans un dossier » ----------
+let rangerLivreId = null, rangerChoix = '';
+
+function rendreChoixDossiers() {
+  const options = ['', ...tousLesDossiers()];
+  $('#listeDossiers').innerHTML = options.map(d => {
+    const profondeur = d ? d.split('/').length : 0;
+    return `<button type="button" class="choix-dossier${d === rangerChoix ? ' actif' : ''}" data-choix="${esc(d)}"
+      role="radio" aria-checked="${d === rangerChoix}" style="padding-left:${12 + profondeur * 18}px">
+      ${ICONE_DOSSIER}<span>${d ? esc(dernierNom(d)) : 'Bibliothèque (aucun dossier)'}</span></button>`;
+  }).join('');
+  $('#nouveauDans').textContent = rangerChoix ? `(dans « ${dernierNom(rangerChoix)} »)` : '(à la racine)';
+}
+
+function ouvrirRanger(id) {
+  const l = livresCache.find(x => x.id === id);
+  if (!l) return;
+  rangerLivreId = id;
+  rangerChoix = l.dossier || dossierCourant || '';
+  $('#titreRanger').textContent = `Ranger « ${l.title} »`;
+  $('#nomNouveauDossier').value = '';
+  rendreChoixDossiers();
+  $('#dialogueRanger').showModal();
+}
+
+$('#listeDossiers').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-choix]');
+  if (!b) return;
+  rangerChoix = b.dataset.choix;
+  rendreChoixDossiers();
+});
+$('#annulerRanger').addEventListener('click', () => $('#dialogueRanger').close());
+$('#formRanger').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const nouveau = nettoyerNom($('#nomNouveauDossier').value);
+  const cible = [rangerChoix, nouveau].filter(Boolean).join('/');
+  $('#dialogueRanger').close();
+  try {
+    await api.ranger(rangerLivreId, cible);
+    message(cible ? `Rangé dans « ${cible.split('/').join(' › ')} » ✔` : 'Remis à la racine de la bibliothèque ✔');
+    await afficherBibliotheque();
+  } catch (err) { message('Erreur : ' + err.message, 8000); }
+});
+
+// ---------- Espace utilisé ----------
+const LIMITE_GRATUITE = 1024 ** 3; // 1 Go offert par Supabase (partagé entre tous les comptes du projet)
+function formaterTaille(o) {
+  if (o < 1024 * 1024) return (o / 1024).toFixed(0) + ' Ko';
+  if (o < 1024 ** 3) return (o / 1024 / 1024).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' Mo';
+  return (o / 1024 ** 3).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) + ' Go';
+}
+async function afficherEspace() {
+  const total = livresCache.reduce((s, l) => s + (Number(l.size) || 0), 0);
+  const zone = $('#espace');
+  zone.hidden = !livresCache.length;
+  if (!livresCache.length) return;
+  let limite = null, detail = '';
+  if (api.nom === 'cloud') {
+    limite = LIMITE_GRATUITE;
+    const restants = Math.max(0, Math.floor((limite - total) / Math.max(1, total / livresCache.length)));
+    detail = `Tes ${livresCache.length} livre${livresCache.length > 1 ? 's' : ''} dans ton espace en ligne. Le projet gratuit offre 1 Go, partagé entre tous les comptes de la liseuse : encore environ ${restants.toLocaleString('fr-FR')} livres de cette taille.`;
+  } else if (api.nom === 'appareil') {
+    try {
+      const est = await navigator.storage.estimate();
+      if (est.quota) { limite = est.quota; detail = 'Espace que le navigateur de cet appareil réserve à la liseuse.'; }
+    } catch { /* non disponible */ }
+  } else {
+    detail = 'Livres rangés dans le dossier « livres » du PC.';
+  }
+  $('#espaceTexte').textContent = limite ? `${formaterTaille(total)} sur ${formaterTaille(limite)}` : formaterTaille(total);
+  $('#espaceJauge').style.width = limite ? Math.max(1, Math.min(100, total / limite * 100)).toFixed(1) + '%' : '0%';
+  $('#espaceDetail').textContent = detail;
+}
 
 async function importer(fichiers) {
   const liste = [...fichiers].filter(f => /\.epub$/i.test(f.name));

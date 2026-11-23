@@ -185,14 +185,62 @@ body:not(.dans-lecteur) .seulement-lecteur { display: none !important; }
 .jauge { height: 5px; background: var(--carte); border-radius: 999px; margin-top: 6px; overflow: hidden; }
 .jauge > div { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
 
-.suppr {
-  position: absolute; top: 10px; right: 10px; width: 28px; height: 28px; border-radius: 9px;
-  border: 1px solid var(--bord); background: var(--carte); color: var(--doux); cursor: pointer;
-  opacity: 0; transition: opacity .15s; font-size: .8rem;
+/* Petits boutons en haut à droite des cartes (ranger, renommer, supprimer) */
+.actions-carte {
+  position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 6px;
+  opacity: 0; transition: opacity .15s;
 }
-.livre:hover .suppr { opacity: 1; }
-.suppr:hover { color: var(--texte); }
-@media (hover: none) { .suppr { opacity: .75; } }
+.livre:hover .actions-carte, .livre:focus-within .actions-carte { opacity: 1; }
+@media (hover: none) { .actions-carte { opacity: .8; } }
+.mini {
+  display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px;
+  border: 1px solid var(--bord); background: var(--carte); color: var(--doux); cursor: pointer; font: inherit; font-size: .8rem;
+}
+.mini:hover { color: var(--texte); border-color: var(--accent); }
+.min0 { min-width: 0; }
+
+/* Dossiers */
+.livre.dossier .couverture { background: var(--carte); border: 1px solid var(--bord); box-shadow: none; position: relative; }
+.mosaique { position: absolute; inset: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 2px; }
+.mosaique img { width: 100%; height: 100%; object-fit: cover; border-radius: 4px; }
+.icone-dossier { color: var(--accent); }
+.livre.dossier .nom::before { content: ""; }
+.badge-dossier { font-size: .7rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent-2); }
+
+.fil-ariane { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 28px; font-size: .85rem; }
+.fil-ariane button { background: none; border: 0; padding: 2px 4px; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; border-radius: 6px; }
+.fil-ariane button:hover { background: var(--carte); }
+.fil-ariane .sep { color: var(--doux); }
+.fil-ariane + .titre-section { margin-top: 4px; }
+
+/* Espace utilisé */
+.espace { margin-top: 36px; padding: 16px 18px; border-radius: var(--rayon); background: var(--surface); border: 1px solid var(--bord); }
+.espace-ligne { display: flex; justify-content: space-between; gap: 12px; font-size: .9rem; font-weight: 600; }
+.espace-ligne b { color: var(--accent); }
+.espace p { margin: 8px 0 0; }
+.espace .jauge { height: 7px; margin-top: 10px; }
+
+/* Fenêtre « Ranger » */
+.dialogue {
+  width: min(440px, calc(100% - 32px)); max-height: calc(100% - 48px); padding: 0;
+  border: 1px solid var(--bord); border-radius: 22px; background: var(--surface); color: var(--texte); box-shadow: var(--ombre);
+}
+.dialogue::backdrop { background: rgba(0, 0, 0, .6); backdrop-filter: blur(2px); }
+.dialogue form { display: flex; flex-direction: column; gap: 14px; padding: 22px; }
+.dialogue h3 { margin: 0; font-size: 1.1rem; }
+.dialogue p { margin: 0; }
+.liste-dossiers { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow-y: auto; padding: 4px; border-radius: 14px; background: var(--fond); border: 1px solid var(--bord); }
+.choix-dossier {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid transparent; background: transparent; color: var(--texte); font: inherit; font-size: .9rem; cursor: pointer;
+}
+.choix-dossier:hover { background: var(--carte); }
+.choix-dossier.actif { background: var(--carte); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.choix-dossier svg { flex: none; color: var(--accent-2); }
+.champ { display: flex; flex-direction: column; gap: 6px; font-size: .88rem; font-weight: 600; }
+.champ input { font: inherit; font-weight: 400; padding: 11px 13px; border-radius: 12px; border: 1px solid var(--bord); background: var(--fond); color: var(--texte); }
+.champ input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+.dialogue .actions { display: flex; justify-content: flex-end; gap: 8px; }
 
 .vide { margin-top: 8px; padding: 28px; text-align: center; color: var(--doux); border: 1.5px dashed var(--bord); border-radius: 20px; }
 
