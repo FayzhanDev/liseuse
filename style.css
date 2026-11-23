@@ -394,4 +394,5 @@ html:has(body.dans-lecteur), body.dans-lecteur { background: var(--lecture-fond)
 .pastille.ambiance { display: flex; align-items: center; justify-content: center; gap: 8px; flex-basis: 100%; }
 .pastille.ambiance i { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
 
+.version { margin: 0; padding: 16px 18px; font-size: .75rem; color: var(--doux); text-align: center; }
 .chargement { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; color: var(--doux); font-size: 1rem; }

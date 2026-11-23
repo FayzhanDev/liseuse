@@ -5,6 +5,9 @@
  */
 'use strict';
 
+// Numéro de version affiché en bas du panneau « Aa » (le même que VERSION dans sw.js)
+const VERSION_APPLI = '8';
+
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const attendre = (ms) => new Promise(r => setTimeout(r, ms));
@@ -1451,6 +1454,7 @@ window.addEventListener('resize', () => rendition?.resize?.());
 
 // ---------- Démarrage ----------
 (async () => {
+  $('#numeroVersion').textContent = `Ma Liseuse · version ${VERSION_APPLI}`;
   appliquerPrefs();
   $('#bibliotheque').hidden = false;
   try {
