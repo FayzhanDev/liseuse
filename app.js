@@ -281,13 +281,20 @@ const LIEN_EMAIL = (() => {
   return { type: p.get('type'), erreur: p.get('error_code') || p.get('error') };
 })();
 
-// Écran « choisis ton mot de passe »
-function demanderNouveauMotDePasse(texte) {
+// Écran « choisis ton mot de passe » (annulable = false pour une invitation)
+function demanderNouveauMotDePasse(texte, annulable = false) {
   $('#connexion').hidden = true;
   $('#bibliotheque').hidden = true;
   $('#nouveauMdp').hidden = false;
   $('#texteNouveauMdp').textContent = texte;
+  $('#erreurNouveauMdp').hidden = true;
+  $('#btnAnnulerMdp').hidden = !annulable;
   return new Promise((ok) => {
+    $('#btnAnnulerMdp').onclick = () => {
+      $('#mdp1').value = ''; $('#mdp2').value = '';
+      $('#nouveauMdp').hidden = true;
+      ok(false);
+    };
     $('#formNouveauMdp').onsubmit = async (e) => {
       e.preventDefault();
       const erreur = $('#erreurNouveauMdp'), bouton = $('#btnNouveauMdp');
@@ -301,10 +308,17 @@ function demanderNouveauMotDePasse(texte) {
       if (error) { erreur.textContent = 'Impossible d’enregistrer : ' + error.message; erreur.hidden = false; return; }
       $('#mdp1').value = ''; $('#mdp2').value = '';
       $('#nouveauMdp').hidden = true;
-      ok();
+      ok(true);
     };
   });
 }
+
+// Bouton « Changer mon mot de passe » (par ex. après un mot de passe provisoire)
+$('#btnMotDePasse').addEventListener('click', async () => {
+  const change = await demanderNouveauMotDePasse('Choisis ton nouveau mot de passe.', true);
+  $('#bibliotheque').hidden = false;
+  if (change) message('Mot de passe changé ✔');
+});
 
 // « Mot de passe oublié ? » : envoie un lien par email
 $('#btnOubli').addEventListener('click', async () => {

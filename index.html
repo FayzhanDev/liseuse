@@ -44,6 +44,7 @@
       </label>
       <p id="erreurNouveauMdp" class="erreur" hidden></p>
       <button type="submit" class="bouton principal" id="btnNouveauMdp">Enregistrer</button>
+      <button type="button" class="lien" id="btnAnnulerMdp" hidden>Annuler</button>
     </form>
   </section>
 
@@ -55,6 +56,9 @@
         + Ajouter des livres
         <input id="choixFichiers" type="file" accept=".epub,application/epub+zip" multiple hidden>
       </label>
+      <button id="btnMotDePasse" class="icone seulement-cloud" title="Changer mon mot de passe" aria-label="Changer mon mot de passe">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 21 2M16 7l3 3M18.5 4.5l2 2"/></svg>
+      </button>
       <button id="btnDeconnexion" class="icone seulement-cloud" title="Se déconnecter" aria-label="Se déconnecter">⎋</button>
     </header>
 
